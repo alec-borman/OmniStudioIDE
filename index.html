@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OmniScore Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+      body { font-family: 'Inter', sans-serif; }
+      pre, code, textarea { font-family: 'JetBrains Mono', monospace; }
+      
+      /* Custom scrollbar */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #18181b; }
+      ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+      /* Print Styles for PDF Export */
+      @media print {
+        body * {
+          visibility: hidden;
+        }
+        #printable-score, #printable-score * {
+          visibility: visible;
+        }
+        #printable-score {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          background: white !important;
+          color: black !important;
+          padding: 20px;
+          margin: 0;
+          border: none;
+        }
+        /* Hide UI elements */
+        header, .editor-pane, .playback-controls {
+          display: none !important;
+        }
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "d3": "https://esm.sh/d3@^7.9.0",
+    "vexflow": "https://esm.sh/vexflow@^4.2.3"
+  }
+}
+</script>
+</head>
+  <body class="bg-zinc-950 text-zinc-100 h-screen w-screen overflow-hidden">
+    <div id="root" class="h-full w-full"></div>
+  </body>
+</html>

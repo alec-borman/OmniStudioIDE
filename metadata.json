@@ -1,0 +1,5 @@
+{
+  "name": "OmniScore Studio",
+  "description": "A compiler, visualizer, and playback engine for the OmniScore musical domain-specific language.",
+  "requestFramePermissions": []
+}
