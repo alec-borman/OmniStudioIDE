@@ -11,6 +11,7 @@ const PauseIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" heigh
 const StopIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16"></rect></svg>;
 const PrintIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>;
 const CompileIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>;
+const DownloadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
 
 const App: React.FC = () => {
   const [code, setCode] = useState(SAMPLE_CODE);
@@ -18,7 +19,7 @@ const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTick, setCurrentTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [autoCompile, setAutoCompile] = useState(false); // New feature: Auto compile toggle
+  const [autoCompile, setAutoCompile] = useState(false); 
   
   const engineRef = useRef<AudioEngine>(new AudioEngine());
   const compileTimerRef = useRef<number | null>(null);
@@ -34,7 +35,6 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Auto-compile debounce
   useEffect(() => {
       if (!autoCompile) return;
       if (compileTimerRef.current) clearTimeout(compileTimerRef.current);
@@ -74,6 +74,16 @@ const App: React.FC = () => {
 
   const handlePrint = () => {
       window.print();
+  };
+
+  const handleDownloadSource = () => {
+      const element = document.createElement("a");
+      const file = new Blob([code], {type: 'text/plain'});
+      element.href = URL.createObjectURL(file);
+      element.download = "score.omni";
+      document.body.appendChild(element); // Required for this to work in FireFox
+      element.click();
+      document.body.removeChild(element);
   };
 
   return (
@@ -141,12 +151,20 @@ const App: React.FC = () => {
                  <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
                  <span className="text-xs font-mono text-zinc-400">score.omni</span>
              </div>
-             <button 
-               onClick={handleCompile}
-               className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
-             >
-               <CompileIcon /> Compile
-             </button>
+             <div className="flex gap-3">
+                 <button 
+                    onClick={handleDownloadSource}
+                    className="text-xs flex items-center gap-1 text-zinc-400 hover:text-white transition-colors"
+                 >
+                    <DownloadIcon /> Download Source
+                 </button>
+                 <button 
+                   onClick={handleCompile}
+                   className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors"
+                 >
+                   <CompileIcon /> Compile
+                 </button>
+             </div>
           </div>
           
           <div className="flex-1 relative group">

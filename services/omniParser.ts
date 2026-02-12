@@ -1,14 +1,13 @@
-import { CompiledScore, InstrumentDef, MacroDef, NoteEvent, StaffStyle, VoiceCursor, DrumMapValue, Attribute, OmniMeta } from '../types';
+import { CompiledScore, InstrumentDef, MacroDef, NoteEvent, StaffStyle, VoiceCursor, Attribute, TimeSignatureEvent } from '../types';
 import { GM_DRUM_MAP, GUITAR_STD_TUNING, TICKS_PER_QUARTER } from '../constants';
 
 /**
- * OmniParser V2
- * Implements the OmniScore 2.0.0 Specification
+ * OmniParser V2 / Tenuto 2.0
+ * Implements the OmniScore & Tenuto Specifications
  */
 
-// Spec 2.5: Literals and Tokens
-const REGEX_TOKEN = /([{}|,\[\]=():])|("[^"]*")|(\$[a-zA-Z_][a-zA-Z0-9_]*)|([a-zA-Z0-9_.\-+#]+)/g;
-// Spec 6.1: Pitch Syntax
+// Fix: Added '/' to identifier regex to support '6/8' as a single token
+const REGEX_TOKEN = /([{}|,\[\]=()])|("[^"]*")|(\$[a-zA-Z_][a-zA-Z0-9_]*)|([a-zA-Z0-9_.\-+#:/]+)/g;
 const REGEX_PITCH = /^([a-g])(qs|qf|tqs|tqf|x|bb|b|#|n)*(-?\d+)?$/i;
 
 export class OmniParser {
@@ -22,7 +21,12 @@ export class OmniParser {
   private macros: Record<string, MacroDef> = {};
   private currentGroup: string | undefined;
   
-  // Spec 5.2: Sticky State (Instrument -> Voice -> Cursor)
+  // Measure & Time Signature Tracking (Tenuto 2.0)
+  private currentNum = 4;
+  private currentDen = 4;
+  private lastParsedMeasureIndex = 0;
+  
+  // Sticky State (Instrument -> Voice -> Cursor)
   private globalCursors: Record<string, Record<string, VoiceCursor>> = {};
 
   constructor(code: string) {
@@ -38,7 +42,9 @@ export class OmniParser {
       },
       instruments: [],
       timeline: [],
-      durationTicks: 0
+      durationTicks: 0,
+      timeSignatures: [],
+      measureStartTicks: { 1: 0 }
     };
   }
 
@@ -50,8 +56,9 @@ export class OmniParser {
     this.tokens = cleanCode.match(REGEX_TOKEN) || [];
     this.tokenIndex = 0;
 
-    // 3. Root Block
-    if (this.peek() === 'omniscore') {
+    // 3. Root Block (omniscore or tenuto)
+    const rootToken = this.peek().toLowerCase();
+    if (rootToken === 'omniscore' || rootToken === 'tenuto') {
       this.consume();
       if (this.match('{')) {
         this.parseBody();
@@ -68,6 +75,15 @@ export class OmniParser {
         const last = this.score.timeline[this.score.timeline.length - 1];
         this.score.durationTicks = last.tickEnd;
     }
+    
+    // Ensure initial time signature is recorded
+    if (this.score.timeSignatures.length === 0) {
+        this.score.timeSignatures.push({ 
+            measureIndex: 1, 
+            num: this.score.meta.timeSignature[0], 
+            den: this.score.meta.timeSignature[1] 
+        });
+    }
 
     return this.score;
   }
@@ -77,7 +93,7 @@ export class OmniParser {
       const t = this.peek();
       
       if (t.toLowerCase() === 'meta') {
-        this.parseMetaBlock();
+        this.parseMetaBlock(true); // Global meta
       } else if (t.toLowerCase() === 'macro') {
         this.parseMacroDef();
       } else if (t.toLowerCase() === 'group') {
@@ -94,15 +110,19 @@ export class OmniParser {
 
   // --- PHASE 1: META ---
 
-  private parseMetaBlock() {
+  private parseMetaBlock(isGlobal: boolean) {
     this.consume(); // 'meta'
     if (!this.match('{')) return;
 
     while (this.peek() !== '}' && this.tokenIndex < this.tokens.length) {
       let key = this.consume().replace(':', ''); 
-      if (this.peek() === ':') this.consume();
+      if (this.peek() === ':') this.consume(); // Consume explicit separator if present
       
       let val = this.consume();
+      // Handle multi-word values like strings in quotes
+      if (val.startsWith('"') && !val.endsWith('"')) {
+          // This case should generally be handled by regex, but just in case
+      }
       if (val.startsWith('[')) {
           while (!val.endsWith(']')) val += this.consume();
       }
@@ -110,15 +130,28 @@ export class OmniParser {
       const cleanVal = val.replace(/"/g, '');
       const lowerKey = key.toLowerCase();
 
-      if (lowerKey === 'title') this.score.meta.title = cleanVal;
-      else if (lowerKey === 'composer') this.score.meta.composer = cleanVal;
-      else if (lowerKey === 'tempo') this.score.meta.tempo = parseInt(cleanVal, 10);
-      else if (lowerKey === 'key') this.score.meta.key = cleanVal;
-      else if (lowerKey === 'time') {
+      if (isGlobal) {
+          if (lowerKey === 'title') this.score.meta.title = cleanVal;
+          else if (lowerKey === 'composer') this.score.meta.composer = cleanVal;
+          else if (lowerKey === 'tempo') this.score.meta.tempo = parseInt(cleanVal, 10);
+          else if (lowerKey === 'key') this.score.meta.key = cleanVal;
+      }
+      
+      if (lowerKey === 'time') {
           const parts = cleanVal.split('/');
           const n = parseInt(parts[0], 10);
           const d = parseInt(parts[1], 10);
-          if (!isNaN(n) && !isNaN(d)) this.score.meta.timeSignature = [n, d];
+          if (!isNaN(n) && !isNaN(d)) {
+              if (isGlobal) {
+                  this.score.meta.timeSignature = [n, d];
+                  this.currentNum = n;
+                  this.currentDen = d;
+              } else {
+                  // Local meta update for time signature
+                  this.currentNum = n;
+                  this.currentDen = d;
+              }
+          }
       }
 
       if (this.peek() === ',') this.consume();
@@ -163,7 +196,7 @@ export class OmniParser {
       while (this.peek() !== '{') this.consume();
       this.consume(); 
       
-      this.currentGroup = "Group"; // Mark current group active
+      this.currentGroup = "Group"; 
       
       while (this.peek() !== '}' && this.tokenIndex < this.tokens.length) {
           if (this.peek().toLowerCase() === 'def') {
@@ -182,6 +215,7 @@ export class OmniParser {
       const id = this.consume();
       let label = id;
       
+      // Check if next token is a string literal for label
       if (this.peek().startsWith('"')) {
           label = this.consume().replace(/"/g, '');
       }
@@ -192,22 +226,35 @@ export class OmniParser {
       
       while (true) {
           const next = this.peek();
-          if (['def', 'group', 'measure', 'meta', 'macro', '}', '{'].includes(next.toLowerCase()) || next === '') break;
-          
-          const attr = this.consume();
-          if (!attr.includes('=')) break;
-          
-          let [k, v] = attr.split('=');
-          k = k.toLowerCase();
-          v = v.replace(/"/g, '');
+          if (['def', 'group', 'measure', 'meta', 'macro', '}', '{', '|'].includes(next.toLowerCase()) || next === '') break;
+          // Check if next is likely an event start (like a note name), stop definition
+          if (next.includes(':') && !next.includes('=')) break;
 
-          if (k === 'style') inst.style = v as StaffStyle;
-          else if (k === 'clef') inst.clef = v;
-          else if (k === 'transpose') inst.transpose = parseInt(v, 10);
-          else if (k === 'patch') inst.patch = v;
-          else if (k === 'vol') inst.vol = parseFloat(v);
-          else if (k === 'pan') inst.pan = parseFloat(v);
-          else if (k === 'map' && v === 'gm_kit') inst.map = GM_DRUM_MAP;
+          let key = this.consume();
+          let val = "";
+          
+          // Handle 'key=val' or 'key = val'
+          if (this.peek() === '=') {
+              this.consume(); // =
+              val = this.consume().replace(/"/g, '');
+          } else if (key.includes('=')) {
+              const parts = key.split('=');
+              key = parts[0];
+              val = parts[1].replace(/"/g, '');
+          } else {
+              // Just a key without explicit value? Assume true or continue parsing next attr
+              continue;
+          }
+          
+          const k = key.toLowerCase();
+
+          if (k === 'style') inst.style = val as StaffStyle;
+          else if (k === 'clef') inst.clef = val;
+          else if (k === 'transpose') inst.transpose = parseInt(val, 10);
+          else if (k === 'patch') inst.patch = val;
+          else if (k === 'vol') inst.vol = parseFloat(val);
+          else if (k === 'pan') inst.pan = parseFloat(val);
+          else if (k === 'map' && val === 'gm_kit') inst.map = GM_DRUM_MAP;
       }
       
       this.score.instruments.push(inst);
@@ -230,6 +277,7 @@ export class OmniParser {
       
       if (!this.match('{')) return;
       
+      // Capture block content
       const blockStart = this.tokenIndex;
       let balance = 1;
       while (balance > 0 && this.tokenIndex < this.tokens.length) {
@@ -238,29 +286,69 @@ export class OmniParser {
           if (t === '}') balance--;
       }
       const blockEnd = this.tokenIndex - 1;
-      
-      const [num, den] = this.score.meta.timeSignature;
-      const ticksPerMeasure = (num * (4/den)) * TICKS_PER_QUARTER;
 
+      // Process measures in range
       for (let m = startM; m <= endM; m++) {
-          const measureStartTick = (m - 1) * ticksPerMeasure;
+          // 1. Calculate Start Tick for this measure
+          this.fillMeasureGap(m);
+          const measureStartTick = this.score.measureStartTicks[m];
+
+          // 2. Scan block for meta changes first (Time Signature)
+          let tempIndex = blockStart;
+          while (tempIndex < blockEnd) {
+             const t = this.tokens[tempIndex];
+             if (t.toLowerCase() === 'meta') {
+                 const savedIndex = this.tokenIndex;
+                 this.tokenIndex = tempIndex;
+                 this.parseMetaBlock(false); // Parse local meta
+                 this.score.timeSignatures.push({
+                     measureIndex: m,
+                     num: this.currentNum,
+                     den: this.currentDen
+                 });
+                 this.tokenIndex = savedIndex; 
+                 break; 
+             }
+             tempIndex++;
+          }
+
+          // 3. Process Content
           this.tokenIndex = blockStart;
-          
           while (this.tokenIndex < blockEnd) {
               const t = this.peek();
               if (t.toLowerCase() === 'meta') {
-                  this.parseMetaBlock();
+                  this.parseMetaBlock(false); // Parse again to consume tokens
               } else {
                   const possibleId = t.replace(':', '');
                   if (this.score.instruments.some(i => i.id === possibleId)) {
                       this.parseInstrumentLogic(possibleId, measureStartTick);
                   } else {
-                      this.consume();
+                      this.consume(); // Skip unknown tokens
                   }
               }
           }
+          
+          // 4. Calculate duration
+          const ticksInThisMeasure = (this.currentNum * (4 / this.currentDen)) * TICKS_PER_QUARTER;
+          this.score.measureStartTicks[m + 1] = measureStartTick + ticksInThisMeasure;
+          this.lastParsedMeasureIndex = m;
       }
+      
       this.tokenIndex = blockEnd + 1;
+  }
+
+  private fillMeasureGap(targetM: number) {
+      let m = this.lastParsedMeasureIndex + 1;
+      if (this.lastParsedMeasureIndex === 0) m = 1;
+
+      while (m <= targetM) {
+          if (this.score.measureStartTicks[m] === undefined) {
+              const prevStart = this.score.measureStartTicks[m - 1] || 0;
+              const prevDur = (this.currentNum * (4 / this.currentDen)) * TICKS_PER_QUARTER;
+              this.score.measureStartTicks[m] = prevStart + prevDur;
+          }
+          m++;
+      }
   }
 
   private parseInstrumentLogic(instId: string, measureStartTick: number) {
@@ -269,7 +357,6 @@ export class OmniParser {
       
       const inst = this.score.instruments.find(i => i.id === instId)!;
 
-      // Spec 10: Voice Groups
       if (this.peek() === '{') {
           this.consume(); // {
           while (this.peek() !== '}' && this.tokenIndex < this.tokens.length) {
@@ -298,15 +385,16 @@ export class OmniParser {
       let currentTick = 0; 
       
       while (this.peek() !== terminator && this.peek() !== '}' && this.tokenIndex < this.tokens.length) {
-          const token = this.consume();
-          if (token === ']') continue; 
+          const token = this.peek();
+          if (token === ']') { this.consume(); continue; } // Barline closure
           
           if (token.startsWith('$')) {
+              this.consume();
               this.handleMacro(token, inst, voiceId, baseTick, (dur) => currentTick += dur);
               continue;
           }
           
-          this.parseEvent(token, inst, voiceId, baseTick, currentTick, (durTicks) => {
+          this.parseEvent(inst, voiceId, baseTick, currentTick, (durTicks) => {
               currentTick += durTicks;
           });
       }
@@ -326,40 +414,47 @@ export class OmniParser {
       
       let body = def.body;
       def.params.forEach((p, i) => {
-          body = body.replace(new RegExp(`\\$${p}\\b`, 'g'), args[i] || '');
+          body = body.replace(new RegExp(`\\$${p}(?![a-zA-Z0-9_])`, 'g'), args[i] || '');
       });
       
       const macroTokens = body.match(REGEX_TOKEN) || [];
-      for (const t of macroTokens) {
-          this.parseEvent(t, inst, voiceId, baseTick, 0, advanceTick); 
-      }
+      
+      this.tokens.splice(this.tokenIndex, 0, ...macroTokens);
   }
 
-  private parseEvent(token: string, inst: InstrumentDef, voiceId: string, baseTick: number, relativeTick: number, onAdvance: (t: number) => void) {
+  private parseEvent(inst: InstrumentDef, voiceId: string, baseTick: number, relativeTick: number, onAdvance: (t: number) => void) {
+      let token = this.consume();
       if (['|', '{', '}', ']'].includes(token)) return;
 
       const cursor = this.globalCursors[inst.id][voiceId];
 
-      // Attribute Split: c4:4.vol(50).stacc
-      // Regex split by dot not preceded by digit/colon
-      const parts = token.split(/(?<!:[\d])\./);
-      const core = parts[0];
-      const attrStrings = parts.slice(1);
+      const attributes: Attribute[] = [];
+      let core = token;
       
-      const attributes: Attribute[] = attrStrings.map(s => {
-          if (s.includes('(')) {
-              const [name, argStr] = s.split('(');
-              const args = argStr.replace(')', '').split(',').map(a => isNaN(Number(a)) ? a : Number(a));
-              return { name, args };
+      if (token.includes('.')) {
+          const parts = token.split(/\.(?=[a-zA-Z])/);
+          core = parts[0];
+          for (let i = 1; i < parts.length; i++) {
+              attributes.push({ name: parts[i], args: [] });
           }
-          return { name: s, args: [] };
-      });
-
+      }
+      
+      if (attributes.length > 0 && this.peek() === '(') {
+          this.consume(); 
+          const args: (string|number)[] = [];
+          while (this.peek() !== ')') {
+              const arg = this.consume();
+              if (arg === ',') continue;
+              args.push(isNaN(Number(arg)) ? arg.replace(/"/g, '') : Number(arg));
+          }
+          this.consume(); 
+          attributes[attributes.length - 1].args = args;
+      }
+      
       const durSplit = core.split(':');
       const pitchStr = durSplit[0];
       const durStr = durSplit[1];
 
-      // Sticky Duration
       if (durStr) {
           cursor.duration = this.parseDurationVal(durStr);
       }
@@ -390,14 +485,27 @@ export class OmniParser {
           event.type = 'rest'; 
       } else if (pitchStr.startsWith('[')) {
           event.type = 'chord';
-          const inner = pitchStr.replace(/[\[\]]/g, '');
-          const pTokens = inner.split(/\s+/);
-          pTokens.forEach(p => this.resolvePitch(p, inst, cursor, event));
+          if (token === '[') {
+              while (this.peek() !== ']') {
+                  const p = this.consume();
+                  this.resolvePitch(p, inst, cursor, event);
+              }
+              this.consume(); 
+              if (this.peek().startsWith(':')) {
+                  const d = this.consume().replace(':', '');
+                  cursor.duration = this.parseDurationVal(d);
+                  event.duration = cursor.duration;
+                  event.tickEnd = event.tickStart + (cursor.duration * TICKS_PER_QUARTER);
+              }
+          } else {
+              const inner = pitchStr.replace(/[\[\]]/g, '');
+              const pTokens = inner.split(/\s+/);
+              pTokens.forEach(p => this.resolvePitch(p, inst, cursor, event));
+          }
       } else {
           this.resolvePitch(pitchStr, inst, cursor, event);
       }
 
-      // Vol override
       const volAttr = attributes.find(a => a.name === 'vol' || a.name === 'vel');
       if (volAttr && typeof volAttr.args[0] === 'number') {
           event.velocity = volAttr.args[0] / 127; 
@@ -406,14 +514,18 @@ export class OmniParser {
       this.score.timeline.push(event);
 
       if (!isGrace) {
-          onAdvance(ticks);
+          onAdvance(event.tickEnd - event.tickStart);
       }
   }
 
   private parseDurationVal(str: string): number {
       const dotCount = (str.match(/\./g) || []).length;
       const clean = str.replace(/\./g, '');
-      const base = 4 / parseInt(clean, 10);
+      const num = parseInt(clean, 10);
+      
+      if (isNaN(num) || num === 0) return 1.0; 
+
+      const base = 4 / num;
       let val = base;
       if (dotCount === 1) val *= 1.5;
       if (dotCount === 2) val *= 1.75;
@@ -421,6 +533,8 @@ export class OmniParser {
   }
 
   private resolvePitch(p: string, inst: InstrumentDef, cursor: VoiceCursor, event: NoteEvent) {
+      if (!p) return;
+      
       if (inst.style === StaffStyle.TAB) {
           const parts = p.split('-');
           if (parts.length === 2) {
@@ -442,7 +556,7 @@ export class OmniParser {
           }
       } else {
           const { midi, octave } = this.parsePitchToMidi(p, cursor.octave);
-          cursor.octave = octave; // Sticky Octave
+          cursor.octave = octave; 
           event.pitches.push(`midi:${midi}`);
       }
   }
@@ -459,10 +573,9 @@ export class OmniParser {
       const baseMap: Record<string, number> = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
       let semitone = baseMap[step];
 
-      if (acc === '#') semitone += 1;
-      if (acc === 'b') semitone -= 1;
-      if (acc === 'x') semitone += 2;
-      if (acc === 'bb') semitone -= 2;
+      if (acc.includes('#')) semitone += 1;
+      if (acc.includes('b')) semitone -= 1;
+      if (acc.includes('x')) semitone += 2;
       
       return { midi: (octave + 1) * 12 + semitone, octave };
   }

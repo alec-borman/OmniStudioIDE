@@ -35,6 +35,12 @@ export interface InstrumentDef {
   pan?: number;
 }
 
+export interface TimeSignatureEvent {
+    measureIndex: number;
+    num: number;
+    den: number;
+}
+
 export interface NoteEvent {
   type: 'note' | 'rest' | 'chord';
   pitches: string[];     // "midi:60" or "tab:0-6"
@@ -52,6 +58,9 @@ export interface CompiledScore {
   instruments: InstrumentDef[];
   timeline: NoteEvent[];
   durationTicks: number;
+  // Tenuto 2.0 Features
+  timeSignatures: TimeSignatureEvent[];
+  measureStartTicks: Record<number, number>; // Index -> Absolute Tick
 }
 
 export interface VoiceCursor {
